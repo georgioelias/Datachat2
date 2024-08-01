@@ -5,7 +5,6 @@ import json
 from openai import OpenAI
 import os
 import chardet
-import numpy
 import io
 
 # OpenAI API setup
@@ -44,7 +43,7 @@ def generate_sql_query(user_input, prompt):
         {"role": "user", "content": user_input}
     ]
     response = client.chat.completions.create(
-        model="gpt-4",  # Use the latest available model
+        model="gpt-4o-mini",  # Use the latest available model
         messages=messages,
         max_tokens=300,
         n=1,
@@ -82,7 +81,7 @@ def generate_response(json_data, prompt):
         {"role": "user", "content": f"JSON data: {json_data}"}
     ]
     response = client.chat.completions.create(
-        model="gpt-4",  # Update this to the correct model name
+        model="gpt-4o-mini",  # Update this to the correct model name
         messages=messages,
         max_tokens=200,
         n=1,
@@ -142,7 +141,7 @@ def main():
     if uploaded_file is not None:
         df, table_name = load_data(uploaded_file)
         csv_explanation = st.text_area("Please enter an explanation for your CSV data:", 
-                                       "Enter a detailed explanation of your CSV file structure here...")
+                                       placeholder="Enter a detailed explanation of your CSV file structure here...")
         if st.button("Submit Explanation"):
             st.success("Explanation submitted successfully!")
     else:
