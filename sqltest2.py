@@ -5,6 +5,7 @@ import json
 from openai import OpenAI
 import os
 import chardet
+import numpy
 import io
 
 # OpenAI API setup
