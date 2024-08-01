@@ -66,13 +66,19 @@ def execute_sql_to_json(query, db_name=DB_NAME):
     finally:
         conn.close()
 
-def generate_sql_query(user_input, prompt):
+def generate_sql_query(user_input, prompt, chat_history):
     messages = [
         {"role": "system", "content": prompt},
-        {"role": "user", "content": user_input}
     ]
+    
+    # Add chat history
+    for message in chat_history:
+        messages.append({"role": message["role"], "content": message["content"]})
+    
+    messages.append({"role": "user", "content": user_input})
+    
     response = client.chat.completions.create(
-        model="gpt-4",  # Use the latest available model
+        model="gpt-4",
         messages=messages,
         max_tokens=300,
         n=1,
@@ -108,13 +114,19 @@ def execute_query_and_save_json(input_string, table_name, db_name=DB_NAME):
     
     return result_dict
 
-def generate_response(json_data, prompt):
+def generate_response(json_data, prompt, chat_history):
     messages = [
         {"role": "system", "content": prompt},
-        {"role": "user", "content": f"JSON data: {json_data}"}
     ]
+    
+    # Add chat history
+    for message in chat_history:
+        messages.append({"role": message["role"], "content": message["content"]})
+    
+    messages.append({"role": "user", "content": f"JSON data: {json_data}"})
+    
     response = client.chat.completions.create(
-        model="gpt-4",  # Update this to the correct model name
+        model="gpt-4",
         messages=messages,
         max_tokens=200,
         n=1,
@@ -210,6 +222,7 @@ def main():
                 1. Return only two JSON variables: "Explanation" and "SQL".
                 2. No matter how complex the user question is, return only one SQL query.
                 3. Always return the SQL query in a one-line format.
+                4. Consider the chat history when generating the SQL query.
 
                 Example output:
                 {{
@@ -219,7 +232,7 @@ def main():
 
                 Your prompt ends here. Everything after this is the chat with the user. Remember to always return the accurate SQL query.
                 '''
-                sql_query_response = generate_sql_query(prompt, sql_generation_prompt)
+                sql_query_response = generate_sql_query(prompt, sql_generation_prompt, st.session_state.messages[:-1])
                 
                 try:
                     sql_data = json.loads(sql_query_response)
@@ -234,9 +247,9 @@ def main():
                         Columns: {', '.join([col for col in df.columns])}
                         {csv_explanation}
 
-                        Now you will receive a JSON containing the SQL output that answers the user's inquiry. Your task is to use the SQL's output to answer the user's inquiry in plain English.
+                        Now you will receive a JSON containing the SQL output that answers the user's inquiry. Your task is to use the SQL's output to answer the user's inquiry in plain English. Consider the chat history when generating your response.
                         '''
-                        response = generate_response(json.dumps(result_dict), response_generation_prompt)
+                        response = generate_response(json.dumps(result_dict), response_generation_prompt, st.session_state.messages)
 
                         st.session_state.messages.append({"role": "assistant", "content": response})
                         
