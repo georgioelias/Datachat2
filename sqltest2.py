@@ -3,6 +3,7 @@ import pandas as pd
 import sqlite3
 import json
 from openai import OpenAI
+import os
 import chardet
 import io
 import re
