@@ -3,10 +3,10 @@ import pandas as pd
 import sqlite3
 import json
 from openai import OpenAI
-import os
 import chardet
 import io
 import re
+from collections import Counter
 
 # OpenAI API setup
 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
@@ -14,6 +14,58 @@ client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 # Constants
 DB_NAME = 'data.db'
 FIXED_TABLE_NAME = "uploaded_data"
+############################################### HELPER FUNCTIONS ########################################################
+def detect_encoding(file_path):                           # Detects the encoding of a file
+    with open(file_path, 'rb') as file:
+        raw_data = file.read()
+    return chardet.detect(raw_data)['encoding']
+
+def get_data_type(values):                                # Determines the data type of a column
+    if all(isinstance(val, (int, float)) for val in values if pd.notna(val)):
+        return "Number"
+    elif all(isinstance(val, str) for val in values if pd.notna(val)):
+        return "Text"
+    elif all(pd.to_datetime(val, errors='coerce') is not pd.NaT for val in values if pd.notna(val)):
+        return "Date"
+    else:
+        return "Mixed"
+
+def analyze_csv(file_path, max_examples=3):                # Analyzes the CSV file and generates a description
+    encoding = detect_encoding(file_path)
+    df = pd.read_csv(file_path, encoding=encoding)
+    
+    prompt = "This CSV file contains the following columns:\n\n"
+    
+    for col in df.columns:
+        values = df[col].dropna().tolist()
+        data_type = get_data_type(values)
+        
+        unique_count = df[col].nunique()
+        total_count = len(df)
+        is_unique = unique_count == total_count
+        
+        examples = df[col].dropna().sample(min(max_examples, len(values))).tolist()
+        
+        prompt += f"Column: {col}\n"
+        prompt += f"Data Type: {data_type}\n"
+        prompt += f"Examples: {', '.join(map(str, examples))}\n"
+        
+        if is_unique:
+            prompt += "Note: This column contains unique values for each row.\n"
+        
+        null_count = df[col].isnull().sum()
+        if null_count > 0:
+            prompt += f"Note: This column contains {null_count} NULL values.\n"
+        
+        if data_type == "Text":
+            value_counts = Counter(values)
+            most_common = value_counts.most_common(3)
+            if len(most_common) < len(value_counts):
+                prompt += f"Most common values: {', '.join(f'{val} ({count})' for val, count in most_common)}\n"
+        
+        prompt += "\n"
+    
+    return prompt
 
 def reset_chat():
     st.session_state.messages = []
@@ -22,22 +74,11 @@ def display_sql_query(query):
     with st.expander("View SQL Query", expanded=False):
         st.code(query, language="sql")
 
-def get_table_schema(table_name, db_name=DB_NAME):
-    conn = sqlite3.connect(db_name)
-    cursor = conn.cursor()
-    cursor.execute(f"PRAGMA table_info({table_name})")
-    columns = cursor.fetchall()
-    schema = [{"name": column[1], "type": column[2]} for column in columns]
-    conn.close()
-    return schema
+def display_json_data(json_data):
+    with st.expander("View JSON Data", expanded=False):
+        st.json(json_data)
 
-def sanitize_table_name(name):
-    sanitized = re.sub(r'\W+', '_', name)
-    if sanitized[0].isdigit():
-        sanitized = '_' + sanitized
-    return sanitized.lower()
-
-def df_to_sqlite(df, table_name, db_name=DB_NAME):
+def df_to_sqlite(df, table_name, db_name=DB_NAME): #The purpose of this function is to save a Pandas DataFrame to an SQLite database with error handling
     try:
         conn = sqlite3.connect(db_name)
         df.to_sql(table_name, conn, if_exists='replace', index=False)
@@ -47,24 +88,7 @@ def df_to_sqlite(df, table_name, db_name=DB_NAME):
         st.error(f"An error occurred while creating the table: {e}")
         return False
 
-def table_exists(table_name, db_name=DB_NAME):
-    conn = sqlite3.connect(db_name)
-    cursor = conn.cursor()
-    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?;", (table_name,))
-    result = cursor.fetchone()
-    conn.close()
-    return result is not None
-
-def execute_sql_to_json(query, db_name=DB_NAME):
-    conn = sqlite3.connect(db_name)
-    try:
-        df = pd.read_sql_query(query, conn)
-        return df.to_json(orient='records')
-    except sqlite3.Error as e:
-        st.error(f"An error occurred while executing the query: {e}")
-        return None
-    finally:
-        conn.close()
+############################################## AI INTERACTION FUNCTIONS ######################################################
 
 def generate_sql_query(user_input, prompt, chat_history):
     messages = [
@@ -78,7 +102,7 @@ def generate_sql_query(user_input, prompt, chat_history):
     messages.append({"role": "user", "content": user_input})
     
     response = client.chat.completions.create(
-        model="gpt-4",
+        model="gpt-4o-mini",
         messages=messages,
         max_tokens=300,
         n=1,
@@ -126,7 +150,7 @@ def generate_response(json_data, prompt, chat_history):
     messages.append({"role": "user", "content": f"JSON data: {json_data}"})
     
     response = client.chat.completions.create(
-        model="gpt-4",
+        model="gpt-4o-mini",
         messages=messages,
         max_tokens=200,
         n=1,
@@ -138,31 +162,24 @@ def generate_response(json_data, prompt, chat_history):
 @st.cache_data
 def load_data(uploaded_file):
     try:
-        df = pd.read_csv(uploaded_file)
-    except UnicodeDecodeError:
-        uploaded_file.seek(0)
-        raw_data = uploaded_file.read()
-        result = chardet.detect(raw_data)
-        encoding = result['encoding']
+        # Save the uploaded file temporarily
+        with open("temp.csv", "wb") as f:
+            f.write(uploaded_file.getvalue())
         
-        try:
-            df = pd.read_csv(io.StringIO(raw_data.decode(encoding)))
-        except UnicodeDecodeError:
-            encodings_to_try = ['iso-8859-1', 'cp1252']
-            for enc in encodings_to_try:
-                try:
-                    df = pd.read_csv(io.StringIO(raw_data.decode(enc)))
-                    break
-                except UnicodeDecodeError:
-                    continue
-            else:
-                st.error(f"Unable to read the CSV file. Please check the file encoding.")
-                return None, None
+        # Analyze the CSV
+        csv_analysis = analyze_csv("temp.csv")
+        
+        # Read the CSV with the detected encoding
+        encoding = detect_encoding("temp.csv")
+        df = pd.read_csv("temp.csv", encoding=encoding)
+    except Exception as e:
+        st.error(f"An error occurred while reading the file: {e}")
+        return None, None, None
 
     if not df_to_sqlite(df, FIXED_TABLE_NAME):
-        return None, None
+        return None, None, None
     
-    return df, FIXED_TABLE_NAME
+    return df, FIXED_TABLE_NAME, csv_analysis
 
 def main():
     st.set_page_config(layout="wide", page_title="DataChat", page_icon="📈")
@@ -176,10 +193,12 @@ def main():
 
     uploaded_file = st.file_uploader("Choose a CSV file", type="csv")
     if uploaded_file is not None:
-        df, table_name = load_data(uploaded_file)
+        df, table_name, csv_analysis = load_data(uploaded_file)
         if df is not None:
+            # Append the analysis to the explanation text area
             csv_explanation = st.text_area("Please enter an explanation for your CSV data:", 
-                                           placeholder="Enter a detailed explanation of your CSV file structure here...")
+                                           value=csv_analysis,
+                                           height=300)
             if st.button("Submit Explanation"):
                 st.success("Explanation submitted successfully!")
         else:
@@ -214,16 +233,18 @@ def main():
                 sql_generation_prompt = f'''
                 Table name: {table_name}
                 Columns: {', '.join([col for col in df.columns])}
+                {csv_analysis}
+
+                User's explanation of the CSV:
                 {csv_explanation}
 
                 A user will now chat with you. Your task is to transform the user's request into an SQL query that retrieves exactly what they are asking for.
 
                 Rules:
                 1. Return only two JSON variables: "Explanation" and "SQL".
-                2. No matter how complex the user question is, return only one SQL query thay may have multiple outputs.
+                2. No matter how complex the user question is, return only one SQL query.
                 3. Always return the SQL query in a one-line format.
                 4. Consider the chat history when generating the SQL query.
-                5. Use only standards SQL without extension as we don't have the extented libraries yet.
 
                 Example output:
                 {{
@@ -243,9 +264,14 @@ def main():
                     result_dict = execute_query_and_save_json(sql_query_response, table_name)
 
                     if result_dict:
+                        display_json_data(result_dict)
+                        
                         response_generation_prompt = f'''
                         Table name: {table_name}
                         Columns: {', '.join([col for col in df.columns])}
+                        {csv_analysis}
+
+                        User's explanation of the CSV:
                         {csv_explanation}
 
                         Now you will receive a JSON containing the SQL output that answers the user's inquiry. Your task is to use the SQL's output to answer the user's inquiry in plain English. Consider the chat history when generating your response.
