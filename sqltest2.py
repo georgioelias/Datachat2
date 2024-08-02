@@ -78,7 +78,7 @@ def generate_sql_query(user_input, prompt, chat_history):
     messages.append({"role": "user", "content": user_input})
     
     response = client.chat.completions.create(
-        model="gpt-4o-mini",
+        model="gpt-4",
         messages=messages,
         max_tokens=300,
         n=1,
@@ -126,7 +126,7 @@ def generate_response(json_data, prompt, chat_history):
     messages.append({"role": "user", "content": f"JSON data: {json_data}"})
     
     response = client.chat.completions.create(
-        model="gpt-4o-mini",
+        model="gpt-4",
         messages=messages,
         max_tokens=200,
         n=1,
