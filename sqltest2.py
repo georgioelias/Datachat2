@@ -220,9 +220,10 @@ def main():
 
                 Rules:
                 1. Return only two JSON variables: "Explanation" and "SQL".
-                2. No matter how complex the user question is, return only one SQL query.
+                2. No matter how complex the user question is, return only one SQL query thay may have multiple outputs.
                 3. Always return the SQL query in a one-line format.
                 4. Consider the chat history when generating the SQL query.
+                5. Use only standards SQL without extension as we don't have the extented libraries yet.
 
                 Example output:
                 {{
