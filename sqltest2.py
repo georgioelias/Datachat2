@@ -9,19 +9,25 @@ import io
 import re
 from collections import Counter
 
-# OpenAI API setup
-client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
-
 # Constants
 DB_NAME = 'data.db'
 FIXED_TABLE_NAME = "uploaded_data"
+
+# OpenAI API setup
+API_KEYS = [
+    st.secrets["OPENAI_API_KEY"],
+    st.secrets["OPENAI_API_KEY_2"],
+    # Add more backup keys as needed
+]
+MODELS = ["gpt-4", "gpt-4"]  # Add more models as needed
+
 ############################################### HELPER FUNCTIONS ########################################################
-def detect_encoding(file_path):                           # Detects the encoding of a file
+def detect_encoding(file_path):
     with open(file_path, 'rb') as file:
         raw_data = file.read()
     return chardet.detect(raw_data)['encoding']
 
-def get_data_type(values):                                # Determines the data type of a column
+def get_data_type(values):
     if all(isinstance(val, (int, float)) for val in values if pd.notna(val)):
         return "Number"
     elif all(isinstance(val, str) for val in values if pd.notna(val)):
@@ -31,7 +37,7 @@ def get_data_type(values):                                # Determines the data 
     else:
         return "Mixed"
 
-def analyze_csv(file_path, max_examples=3):                # Analyzes the CSV file and generates a description
+def analyze_csv(file_path, max_examples=3):
     encoding = detect_encoding(file_path)
     df = pd.read_csv(file_path, encoding=encoding)
     
@@ -77,9 +83,13 @@ def display_sql_query(query):
 
 def display_json_data(json_data):
     with st.expander("View JSON Data", expanded=False):
-        st.json(json_data)
+        if isinstance(json_data, list):
+            for item in json_data:
+                st.json(item)
+        else:
+            st.json(json_data)
 
-def df_to_sqlite(df, table_name, db_name=DB_NAME): #The purpose of this function is to save a Pandas DataFrame to an SQLite database with error handling
+def df_to_sqlite(df, table_name, db_name=DB_NAME):
     try:
         conn = sqlite3.connect(db_name)
         df.to_sql(table_name, conn, if_exists='replace', index=False)
@@ -91,26 +101,38 @@ def df_to_sqlite(df, table_name, db_name=DB_NAME): #The purpose of this function
 
 ############################################## AI INTERACTION FUNCTIONS ######################################################
 
+def try_api_call(func, *args, **kwargs):
+    for api_key in API_KEYS:
+        for model in MODELS:
+            try:
+                client = OpenAI(api_key=api_key)
+                return func(client, model, *args, **kwargs)
+            except Exception as e:
+                print(f"Error with API key {api_key[:5]}... and model {model}: {str(e)}")
+    return None  # If all combinations fail
+
 def generate_sql_query(user_input, prompt, chat_history):
-    messages = [
-        {"role": "system", "content": prompt},
-    ]
+    def api_call(client, model, user_input, prompt, chat_history):
+        messages = [
+            {"role": "system", "content": prompt},
+        ]
+        
+        for message in chat_history:
+            messages.append({"role": message["role"], "content": message["content"]})
+        
+        messages.append({"role": "user", "content": user_input})
+        
+        response = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            max_tokens=300,
+            n=1,
+            stop=None,
+            temperature=0,
+        )
+        return response.choices[0].message.content.strip()
     
-    # Add chat history
-    for message in chat_history:
-        messages.append({"role": message["role"], "content": message["content"]})
-    
-    messages.append({"role": "user", "content": user_input})
-    
-    response = client.chat.completions.create(
-        model="gpt-4",
-        messages=messages,
-        max_tokens=300,
-        n=1,
-        stop=None,
-        temperature=0,
-    )
-    return response.choices[0].message.content.strip()
+    return try_api_call(api_call, user_input, prompt, chat_history)
 
 def execute_query_and_save_json(input_string, table_name, db_name=DB_NAME):
     try:
@@ -124,53 +146,55 @@ def execute_query_and_save_json(input_string, table_name, db_name=DB_NAME):
     cursor = conn.cursor()
     try:
         cursor.execute(sql_query)
-        result = cursor.fetchone()
+        results = cursor.fetchall()
+        column_names = [description[0] for description in cursor.description]
     except sqlite3.Error as e:
         st.error(f"An error occurred while executing the query: {e}")
         return None
     finally:
         conn.close()
     
-    column_name = sql_query.split('AS ')[-1].split(' FROM')[0].strip() if ' AS ' in sql_query else 'result'
-    result_dict = {column_name: result[0] if result else None}
+    result_list = []
+    for row in results:
+        result_dict = {column_names[i]: row[i] for i in range(len(column_names))}
+        result_list.append(result_dict)
     
     with open('query_result.json', 'w') as json_file:
-        json.dump(result_dict, json_file, indent=2)
+        json.dump(result_list, json_file, indent=2)
     
-    return result_dict
+    return result_list
 
 def generate_response(json_data, prompt, chat_history):
-    messages = [
-        {"role": "system", "content": prompt},
-    ]
+    def api_call(client, model, json_data, prompt, chat_history):
+        messages = [
+            {"role": "system", "content": prompt},
+        ]
+        
+        for message in chat_history:
+            messages.append({"role": message["role"], "content": message["content"]})
+        
+        messages.append({"role": "user", "content": f"JSON data: {json_data}"})
+        
+        response = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            max_tokens=200,
+            n=1,
+            stop=None,
+            temperature=0,
+        )
+        return response.choices[0].message.content.strip()
     
-    # Add chat history
-    for message in chat_history:
-        messages.append({"role": message["role"], "content": message["content"]})
-    
-    messages.append({"role": "user", "content": f"JSON data: {json_data}"})
-    
-    response = client.chat.completions.create(
-        model="gpt-4",
-        messages=messages,
-        max_tokens=200,
-        n=1,
-        stop=None,
-        temperature=0,
-    )
-    return response.choices[0].message.content.strip()
+    return try_api_call(api_call, json_data, prompt, chat_history)
 
 @st.cache_data
 def load_data(uploaded_file):
     try:
-        # Save the uploaded file temporarily
         with open("temp.csv", "wb") as f:
             f.write(uploaded_file.getvalue())
         
-        # Analyze the CSV
         csv_analysis = analyze_csv("temp.csv")
         
-        # Read the CSV with the detected encoding
         encoding = detect_encoding("temp.csv")
         df = pd.read_csv("temp.csv", encoding=encoding)
     except Exception as e:
@@ -196,7 +220,6 @@ def main():
     if uploaded_file is not None:
         df, table_name, csv_analysis = load_data(uploaded_file)
         if df is not None:
-            # Append the analysis to the explanation text area
             csv_explanation = st.text_area("Please enter an explanation for your CSV data:", 
                                            value=csv_analysis,
                                            height=300)
@@ -246,47 +269,54 @@ def main():
                 2. No matter how complex the user question is, return only one SQL query.
                 3. Always return the SQL query in a one-line format.
                 4. Consider the chat history when generating the SQL query.
+                5. The query can return multiple rows if appropriate for the user's question.
 
                 Example output:
                 {{
-                "Explanation": "The user is asking about the number of users. To retrieve this, we need to count all rows in the table.",
-                "SQL": "SELECT COUNT(*) AS User_Count FROM {table_name}"
+                "Explanation": "The user is asking about the top 5 users by age. To retrieve this, we need to select the name and age columns, order by age descending, and limit to 5 results.",
+                "SQL": "SELECT name, age FROM {table_name} ORDER BY age DESC LIMIT 5"
                 }}
 
                 Your prompt ends here. Everything after this is the chat with the user. Remember to always return the accurate SQL query.
                 '''
                 sql_query_response = generate_sql_query(prompt, sql_generation_prompt, st.session_state.messages[:-1])
                 
-                try:
-                    sql_data = json.loads(sql_query_response)
-                    sql_query = sql_data["SQL"]
-                    display_sql_query(sql_query)
-                    
-                    result_dict = execute_query_and_save_json(sql_query_response, table_name)
-
-                    if result_dict:
-                        display_json_data(result_dict)
+                if sql_query_response is None:
+                    st.error("Failed to generate a response. Please try again later.")
+                else:
+                    try:
+                        sql_data = json.loads(sql_query_response)
+                        sql_query = sql_data["SQL"]
+                        display_sql_query(sql_query)
                         
-                        response_generation_prompt = f'''
-                        Table name: {table_name}
-                        Columns: {', '.join([col for col in df.columns])}
-                        {csv_analysis}
+                        result_list = execute_query_and_save_json(sql_query_response, table_name)
 
-                        User's explanation of the CSV:
-                        {csv_explanation}
+                        if result_list:
+                            display_json_data(result_list)
+                            
+                            response_generation_prompt = f'''
+                            Table name: {table_name}
+                            Columns: {', '.join([col for col in df.columns])}
+                            {csv_analysis}
 
-                        Now you will receive a JSON containing the SQL output that answers the user's inquiry. Your task is to use the SQL's output to answer the user's inquiry in plain English. Consider the chat history when generating your response.
-                        '''
-                        response = generate_response(json.dumps(result_dict), response_generation_prompt, st.session_state.messages)
+                            User's explanation of the CSV:
+                            {csv_explanation}
 
-                        st.session_state.messages.append({"role": "assistant", "content": response})
-                        
-                        with st.chat_message("assistant"):
-                            st.markdown(response)
-                    else:
-                        st.error("Failed to execute the SQL query. Please try rephrasing your question.")
-                except json.JSONDecodeError:
-                    st.error("Failed to generate a valid SQL query. Please try rephrasing your question.")
+                            Now you will receive a JSON containing the SQL output that answers the user's inquiry. The output may contain multiple rows of data. Your task is to use the SQL's output to answer the user's inquiry in plain English. Consider the chat history when generating your response. If there are multiple results, summarize them appropriately.
+                            '''
+                            response = generate_response(json.dumps(result_list), response_generation_prompt, st.session_state.messages)
+
+                            if response is None:
+                                st.error("Failed to generate a response. Please try again later.")
+                            else:
+                                st.session_state.messages.append({"role": "assistant", "content": response})
+                                
+                                with st.chat_message("assistant"):
+                                    st.markdown(response)
+                        else:
+                            st.error("Failed to execute the SQL query. Please try rephrasing your question.")
+                    except json.JSONDecodeError:
+                        st.error("Failed to generate a valid SQL query. Please try rephrasing your question.")
            
         st.sidebar.button("Reset Chat", on_click=reset_chat)
 
