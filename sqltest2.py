@@ -214,17 +214,28 @@ def main():
         st.session_state.messages = []
 
     df = None
-    csv_explanation = ""
+    current_explanation = ""
 
     uploaded_file = st.file_uploader("Choose a CSV file", type="csv")
     if uploaded_file is not None:
         df, table_name, csv_analysis = load_data(uploaded_file)
         if df is not None:
+            # Initialize the explanation in session state if it doesn't exist
+            if 'csv_explanation' not in st.session_state:
+                st.session_state.csv_explanation = csv_analysis
+
+            # Use the stored explanation as the initial value
             csv_explanation = st.text_area("Please enter an explanation for your CSV data:", 
-                                           value=csv_analysis,
-                                           )
+                                           value=st.session_state.csv_explanation,
+                                           key="csv_explanation_input")
+            
             if st.button("Submit Explanation"):
+                # Update the stored explanation when the submit button is pressed
+                st.session_state.csv_explanation = csv_explanation
                 st.success("Explanation submitted successfully!")
+
+            # Use the stored explanation in subsequent operations
+            current_explanation = st.session_state.csv_explanation
         else:
             st.warning("Failed to load the CSV file. Please try again.")
             return
@@ -255,12 +266,8 @@ def main():
 
             with st.spinner("Generating response..."):
                 sql_generation_prompt = f'''
-                Table name: {table_name}
-                Columns: {', '.join([col for col in df.columns])}
-                {csv_analysis}
-
                 User's explanation of the CSV:
-                {csv_explanation}
+                {current_explanation}
 
                 A user will now chat with you. Your task is to transform the user's request into an SQL query that retrieves exactly what they are asking for.
 
@@ -295,12 +302,8 @@ def main():
                             display_json_data(result_list)
                             
                             response_generation_prompt = f'''
-                            Table name: {table_name}
-                            Columns: {', '.join([col for col in df.columns])}
-                            {csv_analysis}
-
                             User's explanation of the CSV:
-                            {csv_explanation}
+                            {current_explanation}
 
                             Now you will receive a JSON containing the SQL output that answers the user's inquiry. The output may contain multiple rows of data. Your task is to use the SQL's output to answer the user's inquiry in plain English. Consider the chat history when generating your response. If there are multiple results, summarize them appropriately.
                             '''
