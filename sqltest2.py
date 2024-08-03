@@ -222,7 +222,7 @@ def main():
         if df is not None:
             csv_explanation = st.text_area("Please enter an explanation for your CSV data:", 
                                            value=csv_analysis,
-                                           height=300)
+                                           )
             if st.button("Submit Explanation"):
                 st.success("Explanation submitted successfully!")
         else:
