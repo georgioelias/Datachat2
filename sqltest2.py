@@ -269,7 +269,7 @@ def main():
                 User's explanation of the CSV:
                 {current_explanation}
 
-                A user will now chat with you. Your task is to transform the user's request into an SQL query that retrieves exactly what they are asking for.
+                A user will now chat with you. Your task is to transform the user's request into an "SQL LITE" query that retrieves exactly what they are asking for.
 
                 Rules:
                 1. Return only two JSON variables: "Explanation" and "SQL".
