@@ -213,29 +213,27 @@ def main():
     if 'messages' not in st.session_state:
         st.session_state.messages = []
 
+    if 'user_explanation' not in st.session_state:
+        st.session_state.user_explanation = ""
+
     df = None
-    current_explanation = ""
 
     uploaded_file = st.file_uploader("Choose a CSV file", type="csv")
     if uploaded_file is not None:
         df, table_name, csv_analysis = load_data(uploaded_file)
         if df is not None:
-            # Initialize the explanation in session state if it doesn't exist
-            if 'csv_explanation' not in st.session_state:
-                st.session_state.csv_explanation = csv_analysis
-
             # Use the stored explanation as the initial value
-            csv_explanation = st.text_area("Please enter an explanation for your CSV data:", 
-                                           value=st.session_state.csv_explanation,
+            user_explanation = st.text_area("Please enter an explanation for your CSV data:", 
+                                           value=st.session_state.user_explanation,
                                            key="csv_explanation_input")
             
             if st.button("Submit Explanation"):
                 # Update the stored explanation when the submit button is pressed
-                st.session_state.csv_explanation = csv_explanation
+                st.session_state.user_explanation = user_explanation
                 st.success("Explanation submitted successfully!")
 
             # Use the stored explanation in subsequent operations
-            current_explanation = st.session_state.csv_explanation
+            current_explanation = st.session_state.user_explanation if st.session_state.user_explanation else csv_analysis
         else:
             st.warning("Failed to load the CSV file. Please try again.")
             return
