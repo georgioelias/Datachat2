@@ -8,6 +8,7 @@ import chardet
 import io
 import re
 from collections import Counter
+import pyperclip
 
 # Constants
 DB_NAME = 'data.db'
@@ -19,8 +20,51 @@ API_KEYS = [
     st.secrets["OPENAI_API_KEY_2"],
     # Add more backup keys as needed
 ]
-MODELS = ["gpt-4", "gpt-4"]  # Add more models as needed
+MODELS = ["gpt-4o", "gpt-4o"]  # Add more models as needed
 
+# Global variables for prompts
+if 'sql_generation_prompt' not in st.session_state:
+    st.session_state.sql_generation_prompt = '''
+    User's explanation of the CSV:
+    {csv_explanation}
+
+    A user will now chat with you. Your task is to transform the user's request into an SQL query that retrieves exactly what they are asking for.
+
+    Rules:
+    1. Return only two JSON variables: "Explanation" and "SQL".
+    2. No matter how complex the user question is, return only one SQL query.
+    3. Always return the SQL query in a one-line format.
+    4. Consider the chat history when generating the SQL query.
+    5. The query can return multiple rows if appropriate for the user's question.
+    6. You shall not use functions like MONTH(),HOUR(),HOUR,YEAR(),DATEIFF(),.....
+    7. Use only queries proper for sql LITE
+    8.⁠ ⁠YOU CAN ONLY RETURN ONE SQL STATEMENT AT A TIME, COMBINE YOUR ANSWER IN ONLY ONE STATEMENT, NEVER 2 or MORE, Find workarounds.
+    9.Ignore Null values in interpretations and calculations only consider them where they are relevent.
+
+
+    Example output:
+    {{
+    "Explanation": "The user is asking about the top 5 users by age. To retrieve this, we need to select the name and age columns, order by age descending, and limit to 5 results.",
+    "SQL": "SELECT name, age FROM {table_name} ORDER BY age DESC LIMIT 5"
+    }}
+
+    Your prompt ends here. Everything after this is the chat with the user. Remember to always return the accurate SQL query.
+    '''
+
+if 'response_generation_prompt' not in st.session_state:
+    st.session_state.response_generation_prompt = '''
+    User's explanation of the CSV:
+    {csv_explanation}
+
+    Now you will receive a JSON containing the SQL output that answers the user's inquiry. The output may contain multiple rows of data. Your task is to use the SQL's output to answer the user's inquiry in plain English. Consider the chat history when generating your response. If there are multiple results, summarize them appropriately.
+    '''
+TEMPLATE_QUESTIONS = [
+    "What are the last 5 records in the dataset?",
+    "Can you provide the summary statistics for the column 'age'?",
+    "How many unique values are there in the 'category' column?",
+    "List the first 10 rows of the dataset.",
+    "What is the average value of the 'sales' column?"
+]
 ############################################### HELPER FUNCTIONS ########################################################
 def detect_encoding(file_path):
     with open(file_path, 'rb') as file:
@@ -98,6 +142,13 @@ def df_to_sqlite(df, table_name, db_name=DB_NAME):
     except sqlite3.Error as e:
         st.error(f"An error occurred while creating the table: {e}")
         return False
+
+# New function to update prompts
+def update_prompt(prompt_type):
+    if prompt_type == "SQL Generation":
+        st.session_state.sql_generation_prompt = st.session_state.sql_generation_prompt_input
+    elif prompt_type == "Response Generation":
+        st.session_state.response_generation_prompt = st.session_state.response_generation_prompt_input
 
 ############################################## AI INTERACTION FUNCTIONS ######################################################
 
@@ -213,8 +264,11 @@ def main():
     if 'messages' not in st.session_state:
         st.session_state.messages = []
 
-    if 'user_explanation' not in st.session_state:
-        st.session_state.user_explanation = ""
+    if 'csv_explanation' not in st.session_state:
+        st.session_state.csv_explanation = ""
+
+    if 'show_prompt_editor' not in st.session_state:
+        st.session_state.show_prompt_editor = False
 
     df = None
 
@@ -222,18 +276,15 @@ def main():
     if uploaded_file is not None:
         df, table_name, csv_analysis = load_data(uploaded_file)
         if df is not None:
-            # Use the stored explanation as the initial value
             user_explanation = st.text_area("Please enter an explanation for your CSV data:", 
-                                           value=st.session_state.user_explanation,
+                                           value=st.session_state.csv_explanation,
                                            key="csv_explanation_input")
             
             if st.button("Submit Explanation"):
-                # Update the stored explanation when the submit button is pressed
-                st.session_state.user_explanation = user_explanation
+                st.session_state.csv_explanation = user_explanation
                 st.success("Explanation submitted successfully!")
 
-            # Use the stored explanation in subsequent operations
-            current_explanation = st.session_state.user_explanation if st.session_state.user_explanation else csv_analysis
+            current_explanation = st.session_state.csv_explanation if st.session_state.csv_explanation else csv_analysis
         else:
             st.warning("Failed to load the CSV file. Please try again.")
             return
@@ -247,7 +298,33 @@ def main():
         st.sidebar.subheader("Data Preview")
         st.sidebar.dataframe(df.head())
 
+        st.sidebar.subheader("Template Questions")
+        for question in TEMPLATE_QUESTIONS:
+            cols = st.sidebar.columns([1, 1])
+            with cols[0]:
+                st.write(question)
+            with cols[1]:
+                if st.button("Copy", key=question):
+                    pyperclip.copy(question)
+                    st.sidebar.success("Question copied to clipboard!")
+
         st.header("Chat with your data")
+
+        if st.sidebar.button("Edit Prompts"):
+            st.session_state.show_prompt_editor = not st.session_state.show_prompt_editor
+
+        if st.session_state.show_prompt_editor:
+            st.sidebar.subheader("Edit Prompts")
+            prompt_type = st.sidebar.selectbox("Select prompt to edit", ["SQL Generation", "Response Generation"])
+
+            if prompt_type == "SQL Generation":
+                st.sidebar.text_area("Edit SQL Generation Prompt", value=st.session_state.sql_generation_prompt, height=300, key="sql_generation_prompt_input")
+            else:
+                st.sidebar.text_area("Edit Response Generation Prompt", value=st.session_state.response_generation_prompt, height=300, key="response_generation_prompt_input")
+
+            if st.sidebar.button("Submit Prompt Changes"):
+                update_prompt(prompt_type)
+                st.sidebar.success(f"{prompt_type} prompt updated successfully!")
 
         chat_container = st.container()
         with chat_container:
@@ -255,7 +332,16 @@ def main():
                 with st.chat_message(message["role"]):
                     st.markdown(message["content"])
 
-        prompt = st.chat_input("What would you like to know about the data?")
+        col1, col2 = st.columns([4, 1])
+
+        with col1:
+            prompt = st.chat_input("What would you like to know about the data?")
+
+        with col2:
+            if st.button("Reset Chat", key="reset_chat_button"):
+                reset_chat()
+                st.experimental_rerun()
+
         if prompt:
             st.session_state.messages.append({"role": "user", "content": prompt})
             
@@ -263,27 +349,7 @@ def main():
                 st.markdown(prompt)
 
             with st.spinner("Generating response..."):
-                sql_generation_prompt = f'''
-                User's explanation of the CSV:
-                {current_explanation}
-
-                A user will now chat with you. Your task is to transform the user's request into an SQL query that retrieves exactly what they are asking for.
-
-                Rules:
-                1. Return only two JSON variables: "Explanation" and "SQL".
-                2. No matter how complex the user question is, return only one SQL query.
-                3. Always return the SQL query in a one-line format.
-                4. Consider the chat history when generating the SQL query.
-                5. The query can return multiple rows if appropriate for the user's question.
-
-                Example output:
-                {{
-                "Explanation": "The user is asking about the top 5 users by age. To retrieve this, we need to select the name and age columns, order by age descending, and limit to 5 results.",
-                "SQL": "SELECT name, age FROM {table_name} ORDER BY age DESC LIMIT 5"
-                }}
-
-                Your prompt ends here. Everything after this is the chat with the user. Remember to always return the accurate SQL query.
-                '''
+                sql_generation_prompt = st.session_state.sql_generation_prompt.format(csv_explanation=current_explanation, table_name=table_name)
                 sql_query_response = generate_sql_query(prompt, sql_generation_prompt, st.session_state.messages[:-1])
                 
                 if sql_query_response is None:
@@ -299,12 +365,7 @@ def main():
                         if result_list:
                             display_json_data(result_list)
                             
-                            response_generation_prompt = f'''
-                            User's explanation of the CSV:
-                            {current_explanation}
-
-                            Now you will receive a JSON containing the SQL output that answers the user's inquiry. The output may contain multiple rows of data. Your task is to use the SQL's output to answer the user's inquiry in plain English. Consider the chat history when generating your response. If there are multiple results, summarize them appropriately.
-                            '''
+                            response_generation_prompt = st.session_state.response_generation_prompt.format(csv_explanation=current_explanation)
                             response = generate_response(json.dumps(result_list), response_generation_prompt, st.session_state.messages)
 
                             if response is None:
@@ -318,8 +379,6 @@ def main():
                             st.error("Failed to execute the SQL query. Please try rephrasing your question.")
                     except json.JSONDecodeError:
                         st.error("Failed to generate a valid SQL query. Please try rephrasing your question.")
-           
-        st.sidebar.button("Reset Chat", on_click=reset_chat)
 
 if __name__ == "__main__":
     main()
