@@ -3,4 +3,4 @@ openai==1.38
 pandas==2.0.2
 streamlit==1.36.0
 numpy==1.26.4
-pyperclip==1.8.2
+
