@@ -8,7 +8,7 @@ import chardet
 import io
 import re
 from collections import Counter
-import pyperclip
+
 
 # Constants
 DB_NAME = 'data.db'
@@ -58,14 +58,9 @@ if 'response_generation_prompt' not in st.session_state:
 
     Now you will receive a JSON containing the SQL output that answers the user's inquiry. The output may contain multiple rows of data. Your task is to use the SQL's output to answer the user's inquiry in plain English. Consider the chat history when generating your response. If there are multiple results, summarize them appropriately.
     '''
-TEMPLATE_QUESTIONS = [
-    "What are the last 5 records in the dataset?",
-    "Can you provide the summary statistics for the column 'age'?",
-    "How many unique values are there in the 'category' column?",
-    "List the first 10 rows of the dataset.",
-    "What is the average value of the 'sales' column?"
-]
+
 ############################################### HELPER FUNCTIONS ########################################################
+
 def detect_encoding(file_path):
     with open(file_path, 'rb') as file:
         raw_data = file.read()
@@ -280,7 +275,7 @@ def main():
                                            value=st.session_state.csv_explanation,
                                            key="csv_explanation_input")
             
-            if st.button("Submit Explanation"):
+            if st.button("Submit Explanation", key="submit_explanation"):
                 st.session_state.csv_explanation = user_explanation
                 st.success("Explanation submitted successfully!")
 
@@ -298,31 +293,57 @@ def main():
         st.sidebar.subheader("Data Preview")
         st.sidebar.dataframe(df.head())
 
-        st.sidebar.subheader("Template Questions")
-        for question in TEMPLATE_QUESTIONS:
-            cols = st.sidebar.columns([1, 1])
-            with cols[0]:
-                st.write(question)
-            with cols[1]:
-                if st.button("Copy", key=question):
-                    pyperclip.copy(question)
-                    st.sidebar.success("Question copied to clipboard!")
-
         st.header("Chat with your data")
 
-        if st.sidebar.button("Edit Prompts"):
+        # Template questions
+        template_questions = [
+            "What are the top 5 entries by [column name]?",
+            "How many unique values are in the [column name] column?",
+            "What is the average of [column name]?",
+            "Show me the distribution of [column name]",
+            "Compare [column1] and [column2]",
+            "What's the trend of [column name] over time?"
+        ]
+
+        # Dropdown for template questions
+        with st.expander("Template Questions", expanded=False):
+            selected_template = st.selectbox("Select a template question", [""] + template_questions, key="template_select")
+            
+            if selected_template:
+                edited_template = st.text_input("Edit your question", value=selected_template, key="template_edit")
+            else:
+                edited_template = ""
+
+            if st.button("Send Template Question", key="send_template"):
+                prompt = edited_template
+
+        # Chat input
+        user_input = st.chat_input("What would you like to know about the data?", key="user_chat_input")
+
+        # Use edited template if available, otherwise use chat input
+        if edited_template and st.button("Send Template Question", key="send_template_main"):
+            prompt = edited_template
+        elif user_input:
+            prompt = user_input
+        else:
+            prompt = None
+
+        # Button to show/hide prompt editor
+        if st.sidebar.button("Edit Prompts", key="edit_prompts"):
             st.session_state.show_prompt_editor = not st.session_state.show_prompt_editor
 
+        # Show prompt editor if the button has been clicked
         if st.session_state.show_prompt_editor:
             st.sidebar.subheader("Edit Prompts")
-            prompt_type = st.sidebar.selectbox("Select prompt to edit", ["SQL Generation", "Response Generation"])
+            
+            prompt_type = st.sidebar.selectbox("Select prompt to edit", ["SQL Generation", "Response Generation"], key="prompt_type")
 
             if prompt_type == "SQL Generation":
                 st.sidebar.text_area("Edit SQL Generation Prompt", value=st.session_state.sql_generation_prompt, height=300, key="sql_generation_prompt_input")
             else:
                 st.sidebar.text_area("Edit Response Generation Prompt", value=st.session_state.response_generation_prompt, height=300, key="response_generation_prompt_input")
 
-            if st.sidebar.button("Submit Prompt Changes"):
+            if st.sidebar.button("Submit Prompt Changes", key="submit_prompt_changes"):
                 update_prompt(prompt_type)
                 st.sidebar.success(f"{prompt_type} prompt updated successfully!")
 
@@ -332,15 +353,10 @@ def main():
                 with st.chat_message(message["role"]):
                     st.markdown(message["content"])
 
-        col1, col2 = st.columns([4, 1])
-
-        with col1:
-            prompt = st.chat_input("What would you like to know about the data?")
-
-        with col2:
-            if st.button("Reset Chat", key="reset_chat_button"):
-                reset_chat()
-                st.experimental_rerun()
+        # Reset chat button
+        if st.button("Reset Chat", key="reset_chat_button"):
+            reset_chat()
+            st.experimental_rerun()
 
         if prompt:
             st.session_state.messages.append({"role": "user", "content": prompt})
@@ -382,3 +398,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
