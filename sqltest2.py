@@ -171,7 +171,7 @@ def generate_sql_query(user_input, prompt, chat_history):
         response = client.chat.completions.create(
             model=model,
             messages=messages,
-            max_tokens=300,
+            max_tokens=1000,
             n=1,
             stop=None,
             temperature=0,
@@ -224,7 +224,7 @@ def generate_response(json_data, prompt, chat_history):
         response = client.chat.completions.create(
             model=model,
             messages=messages,
-            max_tokens=200,
+            max_tokens=1000,
             n=1,
             stop=None,
             temperature=0,
@@ -314,8 +314,7 @@ def main():
             else:
                 edited_template = ""
 
-            if st.button("Send Template Question", key="send_template"):
-                prompt = edited_template
+            
 
         # Chat input
         user_input = st.chat_input("What would you like to know about the data?", key="user_chat_input")
