@@ -257,7 +257,7 @@ def main():
     st.title("Data Chat Application")
 
     if 'messages' not in st.session_state:
-        st.session_state.messages = []
+        st.session_state.messages = []  # Each message will be a dict with 'role', 'content', and 'sql_query'
 
     if 'csv_explanation' not in st.session_state:
         st.session_state.csv_explanation = ""
@@ -272,7 +272,7 @@ def main():
         df, table_name, csv_analysis = load_data(uploaded_file)
         if df is not None:
             user_explanation = st.text_area("Please enter an explanation for your CSV data:", 
-                                           value=st.session_state.csv_explanation,
+                                           value=csv_analysis,
                                            key="csv_explanation_input")
             
             if st.button("Submit Explanation", key="submit_explanation"):
@@ -314,8 +314,6 @@ def main():
             else:
                 edited_template = ""
 
-            
-
         # Chat input
         user_input = st.chat_input("What would you like to know about the data?", key="user_chat_input")
 
@@ -351,6 +349,9 @@ def main():
             for message in st.session_state.messages:
                 with st.chat_message(message["role"]):
                     st.markdown(message["content"])
+                    if message["role"] == "assistant" and message.get("sql_query"):
+                        with st.expander("View SQL Query", expanded=False):
+                            st.code(message["sql_query"], language="sql")
 
         # Reset chat button
         if st.button("Reset Chat", key="reset_chat_button"):
@@ -358,7 +359,7 @@ def main():
             st.experimental_rerun()
 
         if prompt:
-            st.session_state.messages.append({"role": "user", "content": prompt})
+            st.session_state.messages.append({"role": "user", "content": prompt, "sql_query": None})
             
             with st.chat_message("user"):
                 st.markdown(prompt)
@@ -373,7 +374,6 @@ def main():
                     try:
                         sql_data = json.loads(sql_query_response)
                         sql_query = sql_data["SQL"]
-                        display_sql_query(sql_query)
                         
                         result_list = execute_query_and_save_json(sql_query_response, table_name)
 
@@ -386,10 +386,12 @@ def main():
                             if response is None:
                                 st.error("Failed to generate a response. Please try again later.")
                             else:
-                                st.session_state.messages.append({"role": "assistant", "content": response})
+                                st.session_state.messages.append({"role": "assistant", "content": response, "sql_query": sql_query})
                                 
                                 with st.chat_message("assistant"):
                                     st.markdown(response)
+                                    with st.expander("View SQL Query", expanded=False):
+                                        st.code(sql_query, language="sql")
                         else:
                             st.error("Failed to execute the SQL query. Please try rephrasing your question.")
                     except json.JSONDecodeError:
@@ -397,4 +399,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
