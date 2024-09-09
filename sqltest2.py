@@ -18,9 +18,11 @@ FIXED_TABLE_NAME = "uploaded_data"
 API_KEYS = [
     st.secrets["OPENAI_API_KEY"],
     st.secrets["OPENAI_API_KEY_2"],
-    # Add more backup keys as needed
+    st.secrets["OPENAI_API_KEY_3"],
 ]
-MODELS = ["gpt-4o", "gpt-4o"]  # Add more models as needed
+    # Add more backup keys as needed
+    
+MODELS = ["gpt-4o", "gpt-4o","gpt-4o"]
 
 # Global variables for prompts
 if 'sql_generation_prompt' not in st.session_state:
